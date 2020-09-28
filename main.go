@@ -2,18 +2,21 @@ package main
 
 import (
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
+	"gonum.org/v1/gonum/stat/combin"
 	"log"
 	"os"
 	"strings"
 )
 
 var (
-	toppings = []string{"Käse", "Toastbrot", "Zuccini"}
+	toppings = []string{"Schinken", "Salami", "Pilze", "Zuccini", "Paprika", "Zwiebeln", "Mais", "Pesto", "Spinat", "Hähnchen", "BBQ", "Ananas 😡", "Thunfisch 😡"}
 	//toppingKeyboard tgbotapi.InlineKeyboardMarkup
 	//Maps UserID to Map of Topping and Preference
 	toppingsTheyLike map[int]map[string]bool
 	// Maps username to userID
 	userIds map[string]int
+	//id to name
+	firstNames map[int]string
 )
 
 func updatePrefs(prefs map[string]bool, toggleToppings ...string) map[string]bool {
@@ -37,19 +40,34 @@ func personalMarkupKeyboard(user int) tgbotapi.InlineKeyboardMarkup {
 	if toppingsTheyLike[user] == nil {
 		toppingsTheyLike[user] = updatePrefs(toppingsTheyLike[user])
 	}
-	var toppingButtons []tgbotapi.InlineKeyboardButton
+	var toppingButtons [][]tgbotapi.InlineKeyboardButton
+	var currentRow []tgbotapi.InlineKeyboardButton
+	const itemsPerRow = 3
+	i := 0
+
 	for topping, pref := range toppingsTheyLike[user] {
-		if pref {
-			toppingButtons = append(toppingButtons, tgbotapi.NewInlineKeyboardButtonData("✅ "+topping, topping))
-		} else {
-			toppingButtons = append(toppingButtons, tgbotapi.NewInlineKeyboardButtonData("❎ "+topping, topping))
+		if i >= itemsPerRow {
+			i = 0
+			toppingButtons = append(toppingButtons, currentRow)
+			currentRow = nil
 		}
+		if pref {
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(topping+" ✅", topping))
+		} else {
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(topping+" ❌", topping))
+		}
+
+		i++
 	}
-	return tgbotapi.NewInlineKeyboardMarkup(toppingButtons)
+	toppingButtons = append(toppingButtons, currentRow)
+	toppingButtons = append(toppingButtons, tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("Fertig", "done")))
+	//todo NewInlineKeyboardButtonSwitch
+	return tgbotapi.NewInlineKeyboardMarkup(toppingButtons...)
 }
 
 func main() {
 	userIds = make(map[string]int)
+	firstNames = make(map[int]string)
 	toppingsTheyLike = make(map[int]map[string]bool)
 	//toppingButtons = make(map[string]tgbotapi.InlineKeyboardButton)
 	bot, err := tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_APITOKEN"))
@@ -88,35 +106,23 @@ func main() {
 			log.Println(toppingsTheyLike)
 			log.Printf("Lol was ist debuggen?Toggled:%v, List: %v", update.CallbackQuery.Data, toppingsTheyLike[update.CallbackQuery.From.ID])
 			//toppingButtons[i] = tgbotapi.NewInlineKeyboardButtonData("s" + toppings[i], update.CallbackQuery.Data)
+			if update.CallbackQuery.Data == "done" {
+				//todo add const for this
+				_, _ = bot.Send(tgbotapi.NewDeleteMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)) //todo not delete markup keyboard?
+				_, _ = bot.Send(tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, "Okay, ist gespeichert!"))
+			}
 			toppingKeyboard := personalMarkupKeyboard(update.CallbackQuery.From.ID)
 			_, _ = bot.Send(tgbotapi.NewEditMessageReplyMarkup(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID, toppingKeyboard))
 			//_, _ = bot.Send(tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Data))
 		}
 		if update.Message != nil {
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
-			if update.Message.Entities != nil {
-				for i, entity := range update.Message.Entities {
-					log.Printf("\n\nEntity %v: %v\n", i, entity)
-					var userId int
-					switch entity.Type {
-					case "mention":
-						//+1 to offset @ character
-						username := update.Message.Text[entity.Offset+1 : entity.Offset+entity.Length]
-						log.Println(username)
-						userId = userIds[username]
-					case "text_mention":
-						log.Println(entity.User)
-						userId = entity.User.ID
-					default:
-						continue
-					}
-					log.Printf("Id I got was %v\n", userId)
-				}
-			}
+			getIdsFromMentions(update)
 			//todo evtl nur für setup nachrichten
 			if username := update.Message.From.UserName; username != "" {
 				log.Printf("Saved user with username %v and ID %v", username, update.Message.From.ID)
 				userIds[username] = update.Message.From.ID
+				firstNames[update.Message.From.ID] = update.Message.From.FirstName
 			}
 			switch text := strings.ToLower(update.Message.Text); {
 			//case text == "open":
@@ -131,7 +137,7 @@ func main() {
 				switch update.Message.Command() {
 				case "help":
 					msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten."
-				case "setup":
+				case "setup", "start":
 
 					msg.Text = "Was magst du denn?"
 					msg.ReplyMarkup = personalMarkupKeyboard(update.Message.From.ID)
@@ -189,4 +195,215 @@ func main() {
 			}*/
 	}
 
+}
+
+func getIdsFromMentions(update tgbotapi.Update) (ids []int) {
+	if update.Message.Entities != nil {
+		for i, entity := range update.Message.Entities {
+			log.Printf("\n\nEntity %v: %v\n", i, entity)
+			switch entity.Type {
+			case "mention":
+				//+1 to offset @ character
+				username := update.Message.Text[entity.Offset+1 : entity.Offset+entity.Length]
+				//todo: If user is still unknown to bot then id will be 0.
+				if userIds[username] != 0 {
+					ids = append(ids, userIds[username])
+				}
+			case "text_mention":
+				log.Println(entity.User)
+				firstNames[entity.User.ID] = entity.User.FirstName
+				ids = append(ids, entity.User.ID)
+			default:
+				continue
+			}
+		}
+		log.Printf("I got the following Ids %v\n", ids)
+	}
+	return
+}
+
+func partition(IDs []int, k int) (result [][][]int) {
+	//nehme an IDs ist sortiert
+	n := len(IDs)
+	b := combin.Binomial(n, k) / k
+	l := len(IDs) / k
+	result = make([][][]int, b)
+	if l == 1 {
+		for i := 0; i < k; i++ {
+			result[i][0][0] = IDs[i]
+		}
+		return result
+	}
+
+	/*
+		for sb, id := range IDs {
+				result[0][0] = id
+				restResult := partition(IDs[sb:], k-1)
+	*/
+
+	for sb := 0; sb < b; sb++ {
+		result[sb] = make([][]int, k)
+		result[sb][0][0] = IDs[0]
+		result[sb][0][1] = IDs[1]
+		for id, j := range IDs[0:] {
+			if j < l {
+				result[sb][0] = []int{id} // added afterwards without much thought, see below
+			}
+		}
+		restResult := partition(IDs[sb:], k)
+		result = append(result, restResult...) // added afterwards without much thought to make it compilable without
+		// removing or commenting out this code to not get confused with the other commented out parts of code here,
+		// but to be able to still see my original thoughts on this. To be removed in future commits
+	}
+
+	return
+}
+
+func decide(numberOfPizzas int, IDs []int) [][][]string {
+	//todo fails if number of pizzas is larger than number of people
+	combinations := combin.Combinations(len(IDs), numberOfPizzas)
+	//replace indices of ids with ids. todo integrate in Combinations func
+	//also for every combination save the result
+	results := make([][][]string, len(combinations))
+	//var allOthers = make(map[uint64]nothing) todo compare if this contains already picked set of users
+	for combNo, combination := range combinations {
+		picked := make(map[int]nothing, len(IDs))
+		others := copySliceToMap(IDs)
+		for _, idIndex := range combination {
+			delete(others, idIndex) // Todo: Das funktioniert so bis jetzt nur für 2 pizzen...
+			//combination[i] = IDs[idIndex]
+			picked[IDs[idIndex]] = nothing{}
+		}
+
+		results[combNo] = make([][]string, 2)
+		results[combNo][0] = compromiseFor(picked)
+		results[combNo][1] = compromiseFor(others)
+
+	}
+	return results
+	//todo moment mal, ich will ja mögliche kombinationen mit allen elementen drin also quasi alle permutationen mit numberofpizas -1 aufteilungen dazwischen und das dann ohne duplikate...
+	// siehe https://chat.stackexchange.com/transcript/message/3837894#3837894 and https://mathematica.stackexchange.com/questions/3044/partition-a-set-into-subsets-of-size-k/3050#3050
+}
+
+func copySliceToMap(IDs []int) map[int]nothing {
+	//~key = index value = id~ key = value, index omitted
+	var mappedIDs = make(map[int]nothing, len(IDs))
+	for _, value := range IDs {
+		mappedIDs[value] = nothing{}
+	}
+	return mappedIDs
+}
+
+type nothing struct{}
+
+func compromiseFor(IDs map[int]nothing) (resultToppings []string) {
+	//toppingss := make([][]string, len(IDs))
+	consensusOnDislikedToppings := make(map[string]bool)
+	for id, _ := range IDs {
+		for topping, pref := range toppingsTheyLike[id] {
+			if !pref {
+				consensusOnDislikedToppings[topping] = true
+			}
+		}
+		//toppingss[i] = filterLikedToppings(id)
+	}
+	for _, topping := range toppings {
+		if !consensusOnDislikedToppings[topping] {
+			resultToppings = append(resultToppings, topping)
+		}
+	}
+	return resultToppings
+}
+
+//jakobs algo
+func partSub(values []int, partSize int) (partitions [][][]int) {
+	if values == nil || len(values) == 0 {
+		return
+	}
+	partitions = make([][][]int, 0)
+	partSize = min(partSize, len(values))
+
+	tuples := fixedFirstTupleBuilder(values[0], values, partSize)
+	for _, tup := range tuples {
+		remaining := calculateRemaining(values, tup)
+		remPartitions := partSub(remaining, partSize)
+		if remPartitions != nil && len(remPartitions) > 0 {
+			for _, part := range remPartitions {
+				partitions = append(partitions, append([][]int{tup}, part...)) //todo inefficient, see https://stackoverflow.com/questions/53737435/how-to-prepend-int-to-slice and https://github.com/golang/go/wiki/SliceTricks
+			}
+		} else {
+			partitions = append(partitions, [][]int{tup})
+		}
+	}
+	return
+}
+
+func min(a, b int) int {
+	if a < b {
+		return a
+	}
+	return b
+}
+
+func calculateRemaining(values, tuple []int) []int {
+	//python: remaining = [v for v in values if v not in tup]
+	//result := make([]int, len(values)) //uses more memory than needed, but is maybe more efficient than append
+	var result []int
+	for _, v := range values {
+		if !in(v, tuple) {
+			result = append(result, v)
+		}
+	}
+	return result
+}
+
+//todo make more efficient by using int->noting maps, see copySliceToMap
+func in(v int, tuple []int) bool {
+	for _, t := range tuple {
+		if v == t {
+			return true
+		}
+	}
+	return false
+}
+
+func fixedFirstTupleBuilder(fixed int, values []int, depth int) (tuples [][]int) {
+	//python: values.remove(fixed) but only usage is called with fixed == values[0] so slicing is easier
+	values = values[1:]
+	depth--
+	if depth == 0 {
+		return [][]int{{fixed}}
+	}
+	suffixTuples := tupleBuilder(values, depth)
+	tuples = make([][]int, 0)
+	for _, tup := range suffixTuples {
+		tuples = append(tuples, append([]int{fixed}, tup...))
+	}
+	return
+}
+
+func tupleBuilder(values []int, depth int) (result [][]int) {
+	result = make([][]int, 0)
+	if depth <= 0 {
+		return
+	}
+	nextLevelValues := make([]int, len(values))
+	copy(nextLevelValues, values)
+	for _, i := range values {
+		//python: next_level_values.remove(i), since we iterate over elements of values, and remove the current, without manipulating
+		// nextLevelValues further, it is more efficient to simply slice here.
+		nextLevelValues = nextLevelValues[1:] // alternatively we could also use the index returned by the range expression.
+		if len(nextLevelValues) < depth-1 {   //not cap(nextLevelValues), reslicing changes the length but not the capacity!
+			continue
+		}
+		nextLevelTuples := tupleBuilder(nextLevelValues, depth-1)
+		if nextLevelTuples != nil && len(nextLevelTuples) > 0 {
+			for _, tup := range nextLevelTuples {
+				result = append(result, append([]int{i}, tup...))
+			}
+		} else {
+			result = append(result, []int{i})
+		}
+	}
+	return
 }
