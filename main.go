@@ -1,15 +1,31 @@
 package main
 
 import (
+	"fmt"
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
-	"gonum.org/v1/gonum/stat/combin"
 	"log"
 	"os"
+	"sort"
+	"strconv"
 	"strings"
 )
 
 var (
-	toppings = []string{"Schinken", "Salami", "Pilze", "Zuccini", "Paprika", "Zwiebeln", "Mais", "Pesto", "Spinat", "Hähnchen", "BBQ", "Ananas 😡", "Thunfisch 😡"}
+	toppings = []string{
+		"Schinken",
+		"Salami",
+		"Pilze",
+		"Zuccini",
+		"Paprika",
+		"Zwiebeln",
+		"Mais",
+		"Pesto",
+		"Spinat",
+		"Hähnchen",
+		"BBQ",
+		"Ananas 😡",
+		"Thunfisch 😡",
+	}
 	//toppingKeyboard tgbotapi.InlineKeyboardMarkup
 	//Maps UserID to Map of Topping and Preference
 	toppingsTheyLike map[int]map[string]bool
@@ -222,7 +238,8 @@ func getIdsFromMentions(update tgbotapi.Update) (ids []int) {
 	return
 }
 
-func partition(IDs []int, k int) (result [][][]int) {
+// Own try at implementing a partition algorithm
+/*func partition(IDs []int, k int) (result [][][]int) {
 	//nehme an IDs ist sortiert
 	n := len(IDs)
 	b := combin.Binomial(n, k) / k
@@ -235,11 +252,11 @@ func partition(IDs []int, k int) (result [][][]int) {
 		return result
 	}
 
-	/*
+	*
 		for sb, id := range IDs {
 				result[0][0] = id
 				restResult := partition(IDs[sb:], k-1)
-	*/
+	*
 
 	for sb := 0; sb < b; sb++ {
 		result[sb] = make([][]int, k)
@@ -257,9 +274,9 @@ func partition(IDs []int, k int) (result [][][]int) {
 	}
 
 	return
-}
+}*/
 
-func decide(numberOfPizzas int, IDs []int) [][][]string {
+/*func oldDecide(numberOfPizzas int, IDs []int) [][][]string {
 	//todo fails if number of pizzas is larger than number of people
 	combinations := combin.Combinations(len(IDs), numberOfPizzas)
 	//replace indices of ids with ids. todo integrate in Combinations func
@@ -283,9 +300,98 @@ func decide(numberOfPizzas int, IDs []int) [][][]string {
 	return results
 	//todo moment mal, ich will ja mögliche kombinationen mit allen elementen drin also quasi alle permutationen mit numberofpizas -1 aufteilungen dazwischen und das dann ohne duplikate...
 	// siehe https://chat.stackexchange.com/transcript/message/3837894#3837894 and https://mathematica.stackexchange.com/questions/3044/partition-a-set-into-subsets-of-size-k/3050#3050
+}*/
+
+func announceDecision(decision compromise) string {
+	var b strings.Builder
+	for i, tops := range decision.toppings {
+		_, _ = fmt.Fprintf(&b, "Pizza %v für ", i) // I *could* add an offset here to count like a human but I won't
+		mentions := idsToMentions(decision.participants[i])
+		for j, m := range mentions {
+			b.WriteString(m)
+			if j < len(mentions)-2 {
+				b.WriteString(", ")
+			} else if j == len(mentions)-2 {
+				b.WriteString(" und ")
+			} else {
+				b.WriteString(":\t")
+			}
+		}
+		if len(tops) > 0 {
+			for j, t := range tops {
+				b.WriteString(t)
+				if j < len(tops)-2 {
+					b.WriteString(", ")
+				} else if j == len(tops)-2 {
+					b.WriteString(" und ")
+				}
+			}
+			b.WriteString(".")
+		} else {
+			b.WriteString("Margherita, wirklich?")
+		}
+		if i < len(decision.toppings)-1 {
+			b.WriteString("\n")
+		}
+	}
+	return b.String()
 }
 
-func copySliceToMap(IDs []int) map[int]nothing {
+func decide(numberOfPizzas int, IDs []int) compromise {
+	compromises := allCompromises(numberOfPizzas, IDs)
+	sort.Slice(compromises, func(i, j int) bool {
+		//return people[i].Age < people[j].Age })
+		sumI := 0
+		for _, toppingsI := range compromises[i].toppings {
+			sumI += len(toppingsI)
+		}
+		sumJ := 0
+		for _, toppingsJ := range compromises[j].toppings {
+			sumJ += len(toppingsJ)
+		}
+		return sumI > sumJ
+	})
+	return compromises[0]
+	//for i, compromise := range compromises
+}
+
+func idsToMentions(IDs []int) (mentions []string) {
+	mentions = make([]string, len(IDs))
+	for i, id := range IDs {
+		if firstName, exists := firstNames[id]; exists {
+			mentions[i] = "[" + firstName + "](tg://user?id=" + strconv.Itoa(id) + ")"
+		} else {
+			mentions[i] = "[Stranger " + strconv.Itoa(i) + "](tg://user?id=" + strconv.Itoa(id) + ")"
+		}
+	}
+	return
+}
+
+// when compromise is unwrapped, a group of participants ([]int) corresponds to a set of toppings ([]string) of a pizza they share
+type compromise struct {
+	toppings     [][]string
+	participants [][]int
+}
+
+// allCompromises calculates all possible compromises that can be made with the given people.
+
+func allCompromises(numberOfPizzas int, IDs []int) (compromises []compromise) {
+	//todo add sanity checks
+	sort.Ints(IDs)
+	l := (len(IDs) + numberOfPizzas - 1) / numberOfPizzas // ceil of n/noOfPizzas, alternatively ```l := 1 + (len(IDs) - 1) / numberOfPizzas``` to avoid overflows, but in that case we have all other kinds of problems.
+	partitions := partSub(IDs, l)
+	compromises = make([]compromise, len(partitions)) //compromises = make([][][]string, len(partitions))
+	for i, part := range partitions {
+		compromises[i].toppings = make([][]string, len(part))
+		compromises[i].participants = part
+		for j, pizzaPeople := range part {
+			compromises[i].toppings[j] = compromiseFor(pizzaPeople)
+		}
+	}
+	return
+}
+
+/*func copySliceToMap(IDs []int) map[int]nothing {
 	//~key = index value = id~ key = value, index omitted
 	var mappedIDs = make(map[int]nothing, len(IDs))
 	for _, value := range IDs {
@@ -294,12 +400,12 @@ func copySliceToMap(IDs []int) map[int]nothing {
 	return mappedIDs
 }
 
-type nothing struct{}
+type nothing struct{}*/
 
-func compromiseFor(IDs map[int]nothing) (resultToppings []string) {
+func compromiseFor(IDs []int) (resultToppings []string) {
 	//toppingss := make([][]string, len(IDs))
 	consensusOnDislikedToppings := make(map[string]bool)
-	for id, _ := range IDs {
+	for _, id := range IDs {
 		for topping, pref := range toppingsTheyLike[id] {
 			if !pref {
 				consensusOnDislikedToppings[topping] = true
