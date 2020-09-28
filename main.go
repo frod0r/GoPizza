@@ -1,13 +1,18 @@
 package main
 
 import (
+	"encoding/gob"
 	"fmt"
 	"github.com/go-telegram-bot-api/telegram-bot-api/v5"
 	"log"
 	"os"
+	"os/signal"
+	"regexp"
 	"sort"
 	"strconv"
 	"strings"
+	"sync"
+	"syscall"
 )
 
 var (
@@ -15,7 +20,7 @@ var (
 		"Schinken",
 		"Salami",
 		"Pilze",
-		"Zuccini",
+		"Zucchini",
 		"Paprika",
 		"Zwiebeln",
 		"Mais",
@@ -25,7 +30,7 @@ var (
 		"BBQ",
 		"Ananas 😡",
 		"Thunfisch 😡",
-	}
+	} // todo: adding function to add toppings on the fly is not hard, but making it so that it cannot easily be abused, is.
 	//toppingKeyboard tgbotapi.InlineKeyboardMarkup
 	//Maps UserID to Map of Topping and Preference
 	toppingsTheyLike map[int]map[string]bool
@@ -33,6 +38,8 @@ var (
 	userIds map[string]int
 	//id to name
 	firstNames map[int]string
+
+	lock sync.Mutex
 )
 
 func updatePrefs(prefs map[string]bool, toggleToppings ...string) map[string]bool {
@@ -45,6 +52,9 @@ func updatePrefs(prefs map[string]bool, toggleToppings ...string) map[string]boo
 	}
 	log.Printf("To toggle %v, Prefs %v", toggleToppings, prefs)
 	for _, toggled := range toggleToppings {
+		if toggled == "done" {
+			continue
+		}
 		prefs[toggled] = !prefs[toggled]
 		log.Printf("Toggled %v", toggled)
 	}
@@ -61,16 +71,17 @@ func personalMarkupKeyboard(user int) tgbotapi.InlineKeyboardMarkup {
 	const itemsPerRow = 3
 	i := 0
 
-	for topping, pref := range toppingsTheyLike[user] {
+	for _, topping := range toppings {
+		//for topping, pref := range toppingsTheyLike[user] {// range over maps is randomized https://stackoverflow.com/questions/23330781/sort-go-map-values-by-keys
 		if i >= itemsPerRow {
 			i = 0
 			toppingButtons = append(toppingButtons, currentRow)
 			currentRow = nil
 		}
-		if pref {
-			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(topping+" ✅", topping))
+		if toppingsTheyLike[user][topping] { //pref
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData("✅ "+topping, topping))
 		} else {
-			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData(topping+" ❌", topping))
+			currentRow = append(currentRow, tgbotapi.NewInlineKeyboardButtonData("❌ "+topping, topping))
 		}
 
 		i++
@@ -81,10 +92,98 @@ func personalMarkupKeyboard(user int) tgbotapi.InlineKeyboardMarkup {
 	return tgbotapi.NewInlineKeyboardMarkup(toppingButtons...)
 }
 
+func Restore(path string, mapToRestore interface{}) error {
+	lock.Lock()
+	defer lock.Unlock()
+	file, err := os.Open(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	d := gob.NewDecoder(file)
+	err = d.Decode(mapToRestore)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func Save(path string, mapToSave interface{}) error {
+	lock.Lock()
+	defer lock.Unlock()
+	file, err := os.Create(path)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+	e := gob.NewEncoder(file)
+	err = e.Encode(mapToSave)
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+func CloseHandler() {
+	c := make(chan os.Signal)
+	signal.Notify(c, os.Interrupt, syscall.SIGTERM)
+	signal.Notify(c, os.Interrupt, syscall.SIGINT)
+	go func() {
+		<-c
+		log.Println("Signal to terminate received")
+		err := Save("./userIds.gob", userIds)
+		if err != nil {
+			log.Printf("Error occured saving maps, %v\n", err)
+		}
+		err = Save("./firstNames.gob", firstNames)
+		if err != nil {
+			log.Printf("Error occured saving maps, %v\n", err)
+		}
+		err = Save("./toppingsTheyLike.gob", toppingsTheyLike)
+		if err != nil {
+			log.Printf("Error occured saving maps, %v\n", err)
+		}
+		err = Save("./toppings.gob", toppings)
+		if err != nil {
+			log.Printf("Error occured saving maps, %v\n", err)
+		}
+		log.Println("Done saving. Exiting")
+		os.Exit(0)
+	}()
+}
+
 func main() {
 	userIds = make(map[string]int)
 	firstNames = make(map[int]string)
 	toppingsTheyLike = make(map[int]map[string]bool)
+
+	err := Restore("./toppings.gob", &toppings)
+	if err != nil {
+		log.Printf("Error occured restoring maps, %v\n", err)
+	} else {
+		log.Printf("Restored map: %v", toppings)
+	}
+	err = Restore("./userIds.gob", &userIds)
+	if err != nil {
+		log.Printf("Error occured restoring maps, %v\n", err)
+	} else {
+		log.Printf("Restored map: %v", userIds)
+	}
+	err = Restore("./firstNames.gob", &firstNames)
+	if err != nil {
+		log.Printf("Error occured restoring maps, %v\n", err)
+	} else {
+		log.Printf("Restored map: %v", firstNames)
+	}
+	err = Restore("./toppingsTheyLike.gob", &toppingsTheyLike)
+	if err != nil {
+		log.Printf("Error occured restoring maps, %v\n", err)
+	} else {
+		log.Printf("Restored map: %v", toppingsTheyLike)
+	}
+
+	CloseHandler()
+
 	//toppingButtons = make(map[string]tgbotapi.InlineKeyboardButton)
 	bot, err := tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
@@ -94,7 +193,7 @@ func main() {
 
 	log.Printf("Authorized on account %s", bot.Self.UserName)
 	// Create a new UpdateConfig struct with an offset of 0. Offsets are used
-	// to make sure Telegram knows we've handled previous values and we don't
+	// to make sure Telegram knows we've handled previous values, and we don't
 	// need them repeated.
 	updateConfig := tgbotapi.NewUpdate(0)
 
@@ -134,12 +233,12 @@ func main() {
 		if update.Message != nil {
 			msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
 			getIdsFromMentions(update)
-			//todo evtl nur für setup nachrichten
+			//todo evtl. nur für setup nachrichten
 			if username := update.Message.From.UserName; username != "" {
 				log.Printf("Saved user with username %v and ID %v", username, update.Message.From.ID)
 				userIds[username] = update.Message.From.ID
-				firstNames[update.Message.From.ID] = update.Message.From.FirstName
 			}
+			firstNames[update.Message.From.ID] = update.Message.From.FirstName
 			switch text := strings.ToLower(update.Message.Text); {
 			//case text == "open":
 			//msg.ReplyMarkup = toppingKeyboard
@@ -150,30 +249,101 @@ func main() {
 			}
 
 			if update.Message.IsCommand() {
+			commandSwitch:
 				switch update.Message.Command() {
 				case "help":
-					msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten."
+					msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten.\n" +
+						"Sende mir \\setup, um festzulegen, welche Zutaten du magst (bevorzugt im privaten Chat, um Spam zu vermeiden).\n" +
+						"Wenn dann alle soweit sind, sende \\kompromiss, mit der Anzahl an Pizzen die ihr bestellen wollt und erwähne (@) die leute, die" +
+						"außer dir mitessen wollen."
 				case "setup", "start":
-
 					msg.Text = "Was magst du denn?"
 					msg.ReplyMarkup = personalMarkupKeyboard(update.Message.From.ID)
 				case "kompromiss":
-
+					re, err := regexp.Compile("[0-9]+")
+					if err != nil {
+						log.Printf("Error parsing expression: %v", err)
+						msg.Text = "Hoppla"
+						break commandSwitch
+					}
+					numberOfPizzasStr := re.FindAllString(update.Message.Text, 1) //we take the first number, if they write more, their problem
+					if len(numberOfPizzasStr) == 0 {
+						msg.Text = "Du musst mir schon sagen, wie viele Pizzen ihr wollt."
+						break commandSwitch
+					}
+					numberOfPizzas, err := strconv.Atoi(numberOfPizzasStr[0])
+					if err != nil {
+						log.Printf("Error parsing expression: %v", err)
+						msg.Text = "Hoppla"
+						break commandSwitch
+					}
+					ids := getIdsFromMentions(update)
+					if !in(update.Message.From.ID, ids) {
+						ids = append(ids, update.Message.From.ID)
+					}
+					if len(ids) == 0 {
+						msg.Text = "Du musst mir schon sagen, wer mitessen will. Erwähne (mention) user in deiner Nachricht."
+						break commandSwitch
+					}
+					msg.Text = announceDecision(decide(numberOfPizzas, ids))
+					msg.ParseMode = "Markdown"
+				case "superSecretAddTopping":
+					for i, entity := range update.Message.Entities {
+						log.Printf("\n\nEntity %v: %v\n", i, entity)
+						switch entity.Type {
+						case "bot_command":
+							//+1 to offset space character
+							newTopping := update.Message.Text[entity.Offset+entity.Offset+entity.Length+1:]
+							toppings = append(toppings, newTopping)
+							for id, _ := range toppingsTheyLike {
+								toppingsTheyLike[id][newTopping] = true
+							}
+							msg.Text = "🤫"
+							break commandSwitch
+						default:
+							continue
+						}
+					}
+				case "superSecretRemoveTopping":
+					for i, entity := range update.Message.Entities {
+						log.Printf("\n\nEntity %v: %v\n", i, entity)
+						switch entity.Type {
+						case "bot_command":
+							//+1 to offset space character
+							rmTopping := update.Message.Text[entity.Offset+entity.Offset+entity.Length+1:]
+							newToppings := make([]string, len(toppings)-1)
+							i := 0
+							for _, topping := range toppings {
+								if topping != rmTopping {
+									newToppings[i] = topping
+									i++
+								}
+							}
+							toppings = newToppings
+							for id, _ := range toppingsTheyLike {
+								delete(toppingsTheyLike[id], rmTopping) //could also not delete this but am not sure if this opens up for error cases, safer to delete.
+							}
+							msg.Text = "🤫"
+							break commandSwitch
+						default:
+							continue
+						}
+					}
 				case "entscheide":
 					msg.Text = "Einmal zwei Party Pizzen, Margherita und Schinken." //
 				case "entscheide_veg":
 					msg.Text = "Margherita."
 				case "entscheide_carni":
-					msg.Text = "Schinken."
+					msg.Text = "Schinken und Salami."
 				default:
-					msg.Text = "Was willst du?"
+					msg.Text = "Was willst du? (Probier's mal mit \\help)"
 				}
 			}
 			_, _ = bot.Send(msg)
 		}
 		/*
 			if !update.Message.IsCommand() { // any non-command Messages
-				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Keine Wiederrede!")
+				msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Keine Widerrede!")
 				if strings.Contains(strings.ToLower(update.Message.Text), "aber"){//Contains incoming message text
 					msg.Text = "Nein!"
 
@@ -298,11 +468,14 @@ func getIdsFromMentions(update tgbotapi.Update) (ids []int) {
 
 	}
 	return results
-	//todo moment mal, ich will ja mögliche kombinationen mit allen elementen drin also quasi alle permutationen mit numberofpizas -1 aufteilungen dazwischen und das dann ohne duplikate...
+	//todo moment mal, ich will ja mögliche kombinationen mit allen elementen drin also quasi alle permutationen mit numberOfPizzas -1 aufteilungen dazwischen und das dann ohne duplikate...
 	// siehe https://chat.stackexchange.com/transcript/message/3837894#3837894 and https://mathematica.stackexchange.com/questions/3044/partition-a-set-into-subsets-of-size-k/3050#3050
 }*/
 
 func announceDecision(decision compromise) string {
+	if decision.toppings == nil || decision.participants == nil {
+		return "Kein Kompromiss erlangt."
+	}
 	var b strings.Builder
 	for i, tops := range decision.toppings {
 		_, _ = fmt.Fprintf(&b, "Pizza %v für ", i) // I *could* add an offset here to count like a human but I won't
@@ -339,6 +512,9 @@ func announceDecision(decision compromise) string {
 
 func decide(numberOfPizzas int, IDs []int) compromise {
 	compromises := allCompromises(numberOfPizzas, IDs)
+	if len(compromises) == 0 {
+		return compromise{}
+	}
 	sort.Slice(compromises, func(i, j int) bool {
 		//return people[i].Age < people[j].Age })
 		sumI := 0
@@ -403,7 +579,6 @@ func allCompromises(numberOfPizzas int, IDs []int) (compromises []compromise) {
 type nothing struct{}*/
 
 func compromiseFor(IDs []int) (resultToppings []string) {
-	//toppingss := make([][]string, len(IDs))
 	consensusOnDislikedToppings := make(map[string]bool)
 	for _, id := range IDs {
 		for topping, pref := range toppingsTheyLike[id] {
@@ -411,7 +586,6 @@ func compromiseFor(IDs []int) (resultToppings []string) {
 				consensusOnDislikedToppings[topping] = true
 			}
 		}
-		//toppingss[i] = filterLikedToppings(id)
 	}
 	for _, topping := range toppings {
 		if !consensusOnDislikedToppings[topping] {

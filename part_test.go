@@ -133,3 +133,57 @@ func TestAllCompromisesFor(t *testing.T) {
 	a := announceDecision(d)
 	fmt.Println(a)
 }
+
+func TestAllCompromisesPickyEater(t *testing.T) {
+	toppingsTheyLike = make(map[int]map[string]bool)
+	firstNames = make(map[int]string)
+	fmt.Printf("Toppings:\n%v\n", toppings)
+	userA := 1337
+	firstNames[userA] = "Alice"
+	aDislikes := []string{toppings[1], toppings[3]}
+	toppingsTheyLike[userA] = updatePrefs(toppingsTheyLike[userA], aDislikes...)
+	userB := 4242
+	firstNames[userB] = "Bob"
+	bDislikes := toppings
+	toppingsTheyLike[userB] = updatePrefs(toppingsTheyLike[userB], bDislikes...)
+	userC := 1042
+	cDislikes := []string{toppings[1], toppings[2], toppings[5]}
+	toppingsTheyLike[userC] = updatePrefs(toppingsTheyLike[userC], cDislikes...)
+	userD := 7657
+	firstNames[userD] = "Dora"
+	dDislikes := []string{toppings[2], toppings[5], toppings[10]}
+	toppingsTheyLike[userD] = updatePrefs(toppingsTheyLike[userD], dDislikes...)
+	userE := 1234
+	firstNames[userE] = "Emma"
+	eDislikes := []string{toppings[7], toppings[10], toppings[12]}
+	toppingsTheyLike[userE] = updatePrefs(toppingsTheyLike[userE], eDislikes...)
+	userF := 1197
+	firstNames[userF] = "Frodo"
+	fDislikes := []string{toppings[1], toppings[2], toppings[3]}
+	toppingsTheyLike[userF] = updatePrefs(toppingsTheyLike[userF], fDislikes...)
+	IDs := []int{userA, userB, userC, userD, userE, userF}
+	numberOfPizzas := 2
+	compromises := allCompromises(numberOfPizzas, IDs)
+	for _, compromise := range compromises {
+		sum := 0
+		for _, toppings := range compromise.toppings {
+			sum += len(toppings)
+		}
+		fmt.Printf("Compromise:\n%v share a pizzas with the %v toppings\n%v\n", compromise.participants, sum, compromise.toppings)
+	}
+	d := decide(numberOfPizzas, IDs)
+	sum := 0
+	for _, toppings := range d.toppings {
+		sum += len(toppings)
+	}
+	fmt.Printf("Decided for %v toppings\n%v\n", sum, d)
+	a := announceDecision(d)
+	fmt.Println(a)
+}
+
+func TestAllCompromisesLonely(t *testing.T) {
+	var ids []int
+	d := decide(4, ids)
+	a := announceDecision(d)
+	fmt.Println(a)
+}
