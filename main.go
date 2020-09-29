@@ -13,6 +13,7 @@ import (
 	"strings"
 	"sync"
 	"syscall"
+	"time"
 )
 
 var (
@@ -40,6 +41,12 @@ var (
 	firstNames map[int]string
 
 	lock sync.Mutex
+)
+
+const (
+	stringHowMany = "Du musst mir schon sagen, wie viele Pizzen ihr wollt."
+	stringWho     = "Du musst mir schon sagen, wer mitessen will. Erwähne (mention) user in deiner Nachricht."
+	stringWho2    = "Und für wen (außer dir selbst?"
 )
 
 func updatePrefs(prefs map[string]bool, toggleToppings ...string) map[string]bool {
@@ -205,6 +212,16 @@ func main() {
 	// Start polling Telegram for updates.
 	updates := bot.GetUpdatesChan(updateConfig)
 
+	type partialCommand struct {
+		numberOfPizzas int
+		IDs            []int
+		//lastMessage *tgbotapi.Message
+		lastRelevant time.Time
+	}
+	//messageID -> partialCommand
+	partialCommands := make(map[int]partialCommand)
+	clearInterval := 4 * time.Hour
+
 	// Let's go through each update that we're getting from Telegram.
 	for update := range updates {
 		// Telegram can send many types of updates depending on what your Bot
@@ -231,7 +248,7 @@ func main() {
 			//_, _ = bot.Send(tgbotapi.NewMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Data))
 		}
 		if update.Message != nil {
-			msg := tgbotapi.NewMessage(update.Message.Chat.ID, update.Message.Text)
+			msg := tgbotapi.NewMessage(update.Message.Chat.ID, "Was soll man da sagen...")
 			getIdsFromMentions(update)
 			//todo evtl. nur für setup nachrichten
 			if username := update.Message.From.UserName; username != "" {
@@ -239,6 +256,106 @@ func main() {
 				userIds[username] = update.Message.From.ID
 			}
 			firstNames[update.Message.From.ID] = update.Message.From.FirstName
+			// UserFriendly(TM) hell begins here, it is trying to answer to malformed command strings:
+			if replyTo := update.Message.ReplyToMessage; replyTo != nil {
+				if replyTo.Text == stringHowMany {
+					msg.ReplyToMessageID = update.Message.MessageID
+					re, err := regexp.Compile("[0-9]+")
+					if err != nil {
+						log.Printf("Error parsing expression: %v", err)
+						msg.Text = "Hoppla"
+						_, _ = bot.Send(msg)
+						continue
+					}
+					numberOfPizzasStr := re.FindAllString(update.Message.Text, 1) //we take the first number, if they write more, their problem
+					if len(numberOfPizzasStr) == 0 {
+						msg.ReplyToMessageID = update.Message.MessageID
+						msg.Text = stringHowMany
+						sent, _ := bot.Send(msg)
+						partialCommands[sent.MessageID] = partialCommand{
+							lastRelevant: sent.Time(),
+						}
+						go time.AfterFunc(clearInterval, func() { delete(partialCommands, sent.MessageID) })
+						delete(partialCommands, replyTo.MessageID)
+						/*if replyTo.ReplyToMessage != nil {
+							//original user message we answered, they answered
+							delete(partialCommands, replyTo.ReplyToMessage.MessageID)
+						}*/
+						continue
+					}
+					numberOfPizzas, err := strconv.Atoi(numberOfPizzasStr[0])
+					if err != nil {
+						log.Printf("Error parsing expression: %v", err)
+						msg.Text = "Hoppla"
+						_, _ = bot.Send(msg)
+						continue
+					}
+					if numberOfPizzas == 0 {
+						msg.Text = "Sehr witzig."
+						_, _ = bot.Send(msg)
+						continue
+					}
+
+					var ids []int
+					if partialCommand, ok := partialCommands[replyTo.MessageID]; ok && partialCommand.IDs != nil {
+						ids = partialCommand.IDs
+					}
+					ids = append(ids, getIdsFromMentions(update)...)
+					if !in(update.Message.From.ID, ids) {
+						ids = append(ids, update.Message.From.ID)
+					}
+					if len(ids) <= 1 {
+						msg.Text = stringWho2
+						sent, _ := bot.Send(msg)
+						partialCommands[sent.MessageID] = partialCommand{
+							numberOfPizzas: numberOfPizzas,
+							lastRelevant:   sent.Time(),
+						}
+						go time.AfterFunc(clearInterval, func() { delete(partialCommands, sent.MessageID) })
+						delete(partialCommands, replyTo.MessageID)
+						continue
+					}
+					msg.Text = announceDecision(decide(numberOfPizzas, ids))
+					msg.ParseMode = "Markdown"
+					msg.Text = stringWho2
+					_, _ = bot.Send(msg)
+					delete(partialCommands, replyTo.MessageID)
+					continue
+				} else if replyTo.Text == stringWho || replyTo.Text == stringWho2 {
+					msg.ReplyToMessageID = update.Message.MessageID
+					log.Printf("\nReplyTo: %v\npartialcommands: %+v\n", replyTo.MessageID, partialCommands)
+					var numberOfPizzas int
+					if partialCommand, ok := partialCommands[replyTo.MessageID]; !ok {
+						msg.Text = "Hoppla, die Nachricht auf die du geantwortet hast war wohl zu alt. Probier's nochmal von vorne."
+						//msg.Text = fmt.Sprintf("Hoppla\n%+v", partialCommands)
+						_, _ = bot.Send(msg)
+						continue
+					} else {
+						numberOfPizzas = partialCommand.numberOfPizzas
+					}
+					ids := getIdsFromMentions(update)
+					if !in(update.Message.From.ID, ids) {
+						ids = append(ids, update.Message.From.ID)
+					}
+					if len(ids) <= 1 {
+						msg.Text = stringWho2
+						sent, _ := bot.Send(msg)
+						partialCommands[sent.MessageID] = partialCommand{
+							numberOfPizzas: numberOfPizzas,
+							lastRelevant:   sent.Time(),
+						}
+						go time.AfterFunc(clearInterval, func() { delete(partialCommands, sent.MessageID) })
+						delete(partialCommands, replyTo.MessageID)
+						continue
+					}
+					msg.Text = announceDecision(decide(numberOfPizzas, ids))
+					msg.ParseMode = "Markdown"
+					_, _ = bot.Send(msg)
+					continue
+				}
+				msg.Text = "Etwas ging schief im UserFriendly(TM) Mode, bitte schick einfach ein gescheites Kommando, so schwer ist das nicht..."
+			}
+			//  UserFriendly(TM) hell ends here
 			switch text := strings.ToLower(update.Message.Text); {
 			//case text == "open":
 			//msg.ReplyMarkup = toppingKeyboard
@@ -251,11 +368,16 @@ func main() {
 			if update.Message.IsCommand() {
 			commandSwitch:
 				switch update.Message.Command() {
+				case "v2":
+					msg.Text = "New and Improved! Jetzt auch mit tatsächlicher Funktionalität! (wow)"
+					_, _ = bot.Send(msg)
+					fallthrough
 				case "help":
 					msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten.\n" +
-						"Sende mir \\setup, um festzulegen, welche Zutaten du magst (bevorzugt im privaten Chat, um Spam zu vermeiden).\n" +
-						"Wenn dann alle soweit sind, sende \\kompromiss, mit der Anzahl an Pizzen die ihr bestellen wollt und erwähne (@) die leute, die" +
-						"außer dir mitessen wollen."
+						"Sende mir /setup, um festzulegen, welche Zutaten du magst (bevorzugt im privaten Chat, um Spam zu vermeiden).\n\n" +
+						"Wenn dann alle soweit sind, sende \n/kompromiss `anzahl` `@user1` ... `@userN`,\t mit der `anzahl` an Pizzen die ihr bestellen wollt " +
+						"und allen leuten erwähnt (@), die außer dir mitessen wollen."
+					msg.ParseMode = "Markdown"
 				case "setup", "start":
 					msg.Text = "Was magst du denn?"
 					msg.ReplyMarkup = personalMarkupKeyboard(update.Message.From.ID)
@@ -268,8 +390,14 @@ func main() {
 					}
 					numberOfPizzasStr := re.FindAllString(update.Message.Text, 1) //we take the first number, if they write more, their problem
 					if len(numberOfPizzasStr) == 0 {
-						msg.Text = "Du musst mir schon sagen, wie viele Pizzen ihr wollt."
-						break commandSwitch
+						msg.ReplyToMessageID = update.Message.MessageID
+						msg.Text = stringHowMany
+						sent, _ := bot.Send(msg)
+						partialCommands[sent.MessageID] = partialCommand{
+							lastRelevant: sent.Time(),
+						}
+						go time.AfterFunc(clearInterval, func() { delete(partialCommands, sent.MessageID) })
+						continue
 					}
 					numberOfPizzas, err := strconv.Atoi(numberOfPizzasStr[0])
 					if err != nil {
@@ -282,8 +410,15 @@ func main() {
 						ids = append(ids, update.Message.From.ID)
 					}
 					if len(ids) == 0 {
-						msg.Text = "Du musst mir schon sagen, wer mitessen will. Erwähne (mention) user in deiner Nachricht."
-						break commandSwitch
+						msg.ReplyToMessageID = update.Message.MessageID
+						msg.Text = stringWho
+						sent, _ := bot.Send(msg)
+						partialCommands[sent.MessageID] = partialCommand{
+							numberOfPizzas: numberOfPizzas,
+							lastRelevant:   sent.Time(),
+						}
+						go time.AfterFunc(clearInterval, func() { delete(partialCommands, sent.MessageID) })
+						continue
 					}
 					msg.Text = announceDecision(decide(numberOfPizzas, ids))
 					msg.ParseMode = "Markdown"
