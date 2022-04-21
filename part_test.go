@@ -43,8 +43,8 @@ func TestPartSub(t *testing.T) {
 	}
 }
 func TestPartSubNoValidation(t *testing.T) {
-	n := 6
-	l := 4
+	n := 7
+	l := 3
 	values := make([]int, n)
 	for i := range values {
 		values[i] = i + 1

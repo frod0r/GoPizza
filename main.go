@@ -44,8 +44,8 @@ var (
 )
 
 const (
-	stringHowMany = "Du musst mir schon sagen, wie viele Pizzen ihr wollt."
-	stringWho     = "Du musst mir schon sagen, wer mitessen will. Erwähne (mention) user in deiner Nachricht."
+	stringHowMany = "Du musst mir schon sagen, wie viele Pizzen ihr wollt. (Antworte auf diese Nachricht mit der anzahl an Pizzen die ihr bestellen wollt)"
+	stringWho     = "Du musst mir schon sagen, wer mitessen will. Erwähne (mention) user in deiner Nachricht als antwort auf diese."
 	stringWho2    = "Und für wen (außer dir selbst?"
 )
 
@@ -194,7 +194,9 @@ func main() {
 	//toppingButtons = make(map[string]tgbotapi.InlineKeyboardButton)
 	bot, err := tgbotapi.NewBotAPI(os.Getenv("TELEGRAM_APITOKEN"))
 	if err != nil {
-		panic(err)
+		log.Println("No api token given, quitting")
+		os.Exit(1)
+		//panic(err)
 	}
 	bot.Debug = true
 
@@ -218,9 +220,35 @@ func main() {
 		//lastMessage *tgbotapi.Message
 		lastRelevant time.Time
 	}
+
+	go func() {
+		for now := range time.Tick(2 * time.Hour) {
+			if now.Hour() > 7 || now.Hour() < 23 {
+				log.Println("Time to save stuff")
+				err := Save("./userIds.gob", userIds)
+				if err != nil {
+					log.Printf("Error occured saving maps, %v\n", err)
+				}
+				err = Save("./firstNames.gob", firstNames)
+				if err != nil {
+					log.Printf("Error occured saving maps, %v\n", err)
+				}
+				err = Save("./toppingsTheyLike.gob", toppingsTheyLike)
+				if err != nil {
+					log.Printf("Error occured saving maps, %v\n", err)
+				}
+				err = Save("./toppings.gob", toppings)
+				if err != nil {
+					log.Printf("Error occured saving maps, %v\n", err)
+				}
+				log.Println("Done saving stuff")
+			}
+		}
+	}()
+
 	//messageID -> partialCommand
 	partialCommands := make(map[int]partialCommand)
-	clearInterval := 4 * time.Hour
+	clearInterval := 4 * time.Minute
 
 	// Let's go through each update that we're getting from Telegram.
 	for update := range updates {
@@ -238,6 +266,19 @@ func main() {
 			log.Println(toppingsTheyLike)
 			log.Printf("Lol was ist debuggen?Toggled:%v, List: %v", update.CallbackQuery.Data, toppingsTheyLike[update.CallbackQuery.From.ID])
 			//toppingButtons[i] = tgbotapi.NewInlineKeyboardButtonData("s" + toppings[i], update.CallbackQuery.Data)
+			/*if update.CallbackQuery.Data == "switch_to_private" {
+
+				_, err = bot.AnswerInlineQuery(tgbotapi.InlineConfig{
+					InlineQueryID: update.CallbackQuery.ID,
+					Results:       nil,
+					SwitchPMText:  "hhhhh",
+					SwitchPMParameter: "AAAAA_BBBBB",
+				})
+				if err != nil {
+					log.Println(err)
+				}
+				continue
+			}*/
 			if update.CallbackQuery.Data == "done" {
 				//todo add const for this
 				_, _ = bot.Send(tgbotapi.NewDeleteMessage(update.CallbackQuery.Message.Chat.ID, update.CallbackQuery.Message.MessageID)) //todo not delete markup keyboard?
@@ -373,12 +414,33 @@ func main() {
 					_, _ = bot.Send(msg)
 					fallthrough
 				case "help":
-					msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten.\n" +
-						"Sende mir /setup, um festzulegen, welche Zutaten du magst (bevorzugt im privaten Chat, um Spam zu vermeiden).\n\n" +
-						"Wenn dann alle soweit sind, sende \n/kompromiss `anzahl` `@user1` ... `@userN`,\t mit der `anzahl` an Pizzen die ihr bestellen wollt " +
-						"und allen leuten erwähnt (@), die außer dir mitessen wollen."
+					if update.Message.Chat.IsGroup() {
+						msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten.\n" +
+							"Sende mir `/setup` [in einer Privaten Nachricht](https://t.me/pizza_entscheide_bot?start=setup), um festzulegen, welche Zutaten du magst.\n\n" +
+							"Wenn dann alle soweit sind, sende \n/kompromiss `anzahl` `@user1` ... `@userN`,\t mit der `anzahl` an Pizzen die ihr bestellen wollt " +
+							"und allen leuten erwähnt (@), die außer dir mitessen wollen."
+					} else {
+						msg.Text = "Ich vermeide lange diskussionen darüber, welche Pizzen bestellt werden sollten.\n" +
+							"Sende mir /setup, um festzulegen, welche Zutaten du magst.\n\n" +
+							"Wenn dann alle soweit sind, sende \n/kompromiss `anzahl` `@user1` ... `@userN`,\t mit der `anzahl` an Pizzen die ihr bestellen wollt " +
+							"und allen leuten erwähnt (@), die außer dir mitessen wollen."
+					}
 					msg.ParseMode = "Markdown"
+				case "resetPartial":
+					log.Printf("Deleting partial command %v\n", partialCommands[update.Message.From.ID])
+					delete(partialCommands, update.Message.From.ID) //todo Funktioniert nicht... partielle kommandos werden mit message id gespeichert
+					msg.Text = "Diese Unenstchlossenheit kotzt mich an! (Partielle Kommandos zurückgesetzt"
 				case "setup", "start":
+					if update.Message.Chat.IsGroup() {
+						//msg.ReplyMarkup = tgbotapi.NewInlineKeyboardMarkup(tgbotapi.NewInlineKeyboardRow(tgbotapi.NewInlineKeyboardButtonData("setup im Privaten chat", "switch_to_private")))
+						msg.Text = "Sende mir eine [Private Nachricht](https://t.me/pizza_entscheide_bot?start=setup), um spam zu vermeiden"
+						msg.ParseMode = "Markdown"
+						_, err = bot.Send(msg)
+						if err != nil {
+							log.Println("Error sending reply markup")
+						}
+						continue
+					}
 					msg.Text = "Was magst du denn?"
 					msg.ReplyMarkup = personalMarkupKeyboard(update.Message.From.ID)
 				case "kompromiss":
@@ -465,13 +527,13 @@ func main() {
 						}
 					}
 				case "entscheide":
-					msg.Text = "Einmal zwei Party Pizzen, Margherita und Schinken." //
+					msg.Text = "Einmal zwei Party Pizzen, Margherita und Schinken-Salami." //
 				case "entscheide_veg":
 					msg.Text = "Margherita."
 				case "entscheide_carni":
 					msg.Text = "Schinken und Salami."
 				default:
-					msg.Text = "Was willst du? (Probier's mal mit \\help)"
+					msg.Text = "Was willst du? (Probier's mal mit /help)"
 				}
 			}
 			_, _ = bot.Send(msg)
