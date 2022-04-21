@@ -2,6 +2,8 @@ package main
 
 import (
 	"fmt"
+	"pizza_decision_bot/data"
+	"pizza_decision_bot/util"
 	"testing"
 )
 
@@ -67,7 +69,7 @@ func TestCompromiseFor(t *testing.T) {
 	fmt.Printf("Toppings:\n%v\n", toppings)
 	userA := 1337
 	aDislikes := []string{toppings[1], toppings[3]}
-	toppingsTheyLike[userA] = updatePrefs(toppingsTheyLike[userA], aDislikes...)
+	toppingsTheyLike[userA] = data.updatePrefs(toppingsTheyLike[userA], aDislikes...)
 	fmt.Printf("Toppings A likes:\n%v\n", toppingsTheyLike[userA])
 	compromise := compromiseFor([]int{userA, 1})
 	fmt.Printf("Compromise:\n%v\n", compromise)
@@ -94,29 +96,29 @@ func TestAllCompromisesFor(t *testing.T) {
 	userA := 1337
 	firstNames[userA] = "Alice"
 	aDislikes := []string{toppings[1], toppings[3]}
-	toppingsTheyLike[userA] = updatePrefs(toppingsTheyLike[userA], aDislikes...)
+	toppingsTheyLike[userA] = data.updatePrefs(toppingsTheyLike[userA], aDislikes...)
 	userB := 4242
 	firstNames[userB] = "Bob"
 	bDislikes := []string{toppings[1], toppings[3], toppings[5]}
-	toppingsTheyLike[userB] = updatePrefs(toppingsTheyLike[userB], bDislikes...)
+	toppingsTheyLike[userB] = data.updatePrefs(toppingsTheyLike[userB], bDislikes...)
 	userC := 1042
 	cDislikes := []string{toppings[1], toppings[2], toppings[5]}
-	toppingsTheyLike[userC] = updatePrefs(toppingsTheyLike[userC], cDislikes...)
+	toppingsTheyLike[userC] = data.updatePrefs(toppingsTheyLike[userC], cDislikes...)
 	userD := 7657
 	firstNames[userD] = "Dora"
 	dDislikes := []string{toppings[2], toppings[5], toppings[10]}
-	toppingsTheyLike[userD] = updatePrefs(toppingsTheyLike[userD], dDislikes...)
+	toppingsTheyLike[userD] = data.updatePrefs(toppingsTheyLike[userD], dDislikes...)
 	userE := 1234
 	firstNames[userE] = "Emma"
 	eDislikes := []string{toppings[7], toppings[10], toppings[12]}
-	toppingsTheyLike[userE] = updatePrefs(toppingsTheyLike[userE], eDislikes...)
+	toppingsTheyLike[userE] = data.updatePrefs(toppingsTheyLike[userE], eDislikes...)
 	userF := 1197
 	firstNames[userF] = "Frodo"
 	fDislikes := []string{toppings[1], toppings[2], toppings[3]}
-	toppingsTheyLike[userF] = updatePrefs(toppingsTheyLike[userF], fDislikes...)
+	toppingsTheyLike[userF] = data.updatePrefs(toppingsTheyLike[userF], fDislikes...)
 	IDs := []int{userA, userB, userC, userD, userE, userF}
 	numberOfPizzas := 2
-	compromises := allCompromises(numberOfPizzas, IDs)
+	compromises := util.allCompromises(numberOfPizzas, IDs)
 	for _, compromise := range compromises {
 		sum := 0
 		for _, toppings := range compromise.toppings {
@@ -130,7 +132,7 @@ func TestAllCompromisesFor(t *testing.T) {
 		sum += len(toppings)
 	}
 	fmt.Printf("Decided for %v toppings\n%v\n", sum, d)
-	a := announceDecision(d)
+	a := util.AnnounceDecision(d)
 	fmt.Println(a)
 }
 
@@ -141,29 +143,29 @@ func TestAllCompromisesPickyEater(t *testing.T) {
 	userA := 1337
 	firstNames[userA] = "Alice"
 	aDislikes := []string{toppings[1], toppings[3]}
-	toppingsTheyLike[userA] = updatePrefs(toppingsTheyLike[userA], aDislikes...)
+	toppingsTheyLike[userA] = data.updatePrefs(toppingsTheyLike[userA], aDislikes...)
 	userB := 4242
 	firstNames[userB] = "Bob"
 	bDislikes := toppings
-	toppingsTheyLike[userB] = updatePrefs(toppingsTheyLike[userB], bDislikes...)
+	toppingsTheyLike[userB] = data.updatePrefs(toppingsTheyLike[userB], bDislikes...)
 	userC := 1042
 	cDislikes := []string{toppings[1], toppings[2], toppings[5]}
-	toppingsTheyLike[userC] = updatePrefs(toppingsTheyLike[userC], cDislikes...)
+	toppingsTheyLike[userC] = data.updatePrefs(toppingsTheyLike[userC], cDislikes...)
 	userD := 7657
 	firstNames[userD] = "Dora"
 	dDislikes := []string{toppings[2], toppings[5], toppings[10]}
-	toppingsTheyLike[userD] = updatePrefs(toppingsTheyLike[userD], dDislikes...)
+	toppingsTheyLike[userD] = data.updatePrefs(toppingsTheyLike[userD], dDislikes...)
 	userE := 1234
 	firstNames[userE] = "Emma"
 	eDislikes := []string{toppings[7], toppings[10], toppings[12]}
-	toppingsTheyLike[userE] = updatePrefs(toppingsTheyLike[userE], eDislikes...)
+	toppingsTheyLike[userE] = data.updatePrefs(toppingsTheyLike[userE], eDislikes...)
 	userF := 1197
 	firstNames[userF] = "Frodo"
 	fDislikes := []string{toppings[1], toppings[2], toppings[3]}
-	toppingsTheyLike[userF] = updatePrefs(toppingsTheyLike[userF], fDislikes...)
+	toppingsTheyLike[userF] = data.updatePrefs(toppingsTheyLike[userF], fDislikes...)
 	IDs := []int{userA, userB, userC, userD, userE, userF}
 	numberOfPizzas := 2
-	compromises := allCompromises(numberOfPizzas, IDs)
+	compromises := util.allCompromises(numberOfPizzas, IDs)
 	for _, compromise := range compromises {
 		sum := 0
 		for _, toppings := range compromise.toppings {
@@ -177,13 +179,13 @@ func TestAllCompromisesPickyEater(t *testing.T) {
 		sum += len(toppings)
 	}
 	fmt.Printf("Decided for %v toppings\n%v\n", sum, d)
-	a := announceDecision(d)
+	a := util.AnnounceDecision(d)
 	fmt.Println(a)
 }
 
 func TestAllCompromisesLonely(t *testing.T) {
 	var ids []int
 	d := decide(4, ids)
-	a := announceDecision(d)
+	a := util.AnnounceDecision(d)
 	fmt.Println(a)
 }
